@@ -72,7 +72,8 @@ python scripts/probe_backends.py
 | `scripts/optimize_gif.py` | 在实际字节预算下优化 GIF |
 | `scripts/validate_grid_geometry.py` | 防止错误宫格导致裁切或比例变化 |
 | `scripts/temporal_validate.py` | 检查帧间突变和循环边界 |
-| `scripts/region_validate.py` | 检查非目标区域是否被误改 |
+| `scripts/region_validate.py` | 检查相邻帧的非目标区域是否被误改 |
+| `scripts/composite_validate.py` | 检查静态底图合成后的背景漂移和蒙版边缘溢出 |
 | `scripts/repair_plan.py` | 将失败报告编译成下一步修复动作 |
 | `scripts/write_manifest.py` | 写出可复核的 manifest |
 
@@ -83,7 +84,9 @@ python -m unittest discover -s tests -v
 python "$env:USERPROFILE\.codex\skills\.system\skill-creator\scripts\quick_validate.py" .
 ```
 
-当前默认保持 `contain` 比例适配；除非用户明确要求，EasyGIF 不会用裁切或拉伸掩盖宫格几何错误。FILM 只用于不透明、同机位的关键帧；透明主体优先走 alpha-safe 图层或宫格路线。
+当前默认保持 `contain` 比例适配；`optimize_gif.py --size 240` 和 `video_to_gif.py --size 240` 默认把长边缩放到 240 并保留源比例，只有显式使用 `--square` 或同时指定 `--width/--height` 才会改变画布比例。除非用户明确要求，EasyGIF 不会用裁切或拉伸掩盖宫格几何错误。FILM 只用于不透明、同机位的关键帧；透明主体优先走 alpha-safe 图层或宫格路线。
+
+整帧生成、视频帧和 FILM 帧始终按完整画面处理。只有明确的 RGBA 补丁、可靠蒙版或确定性局部变换才允许使用“静态底图+局部层”；整帧背景漂移不能用近似颜色抠主体来修复，否则很容易出现白边、绿边、重影和画面割裂。局部合成必须同时通过 `region_validate.py` 与 `composite_validate.py`。
 
 ## 参考思想
 

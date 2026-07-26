@@ -91,6 +91,15 @@ def size_candidates(initial: tuple[int, int], minimum: int) -> list[tuple[int, i
     return result
 
 
+def aspect_preserving_size(source_size: tuple[int, int], long_edge: int) -> tuple[int, int]:
+    source_width, source_height = source_size
+    scale = long_edge / max(source_width, source_height)
+    return (
+        max(16, round(source_width * scale)),
+        max(16, round(source_height * scale)),
+    )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("input", type=Path)
@@ -98,6 +107,7 @@ def main() -> None:
     parser.add_argument("--size", type=int, default=240)
     parser.add_argument("--width", type=int)
     parser.add_argument("--height", type=int)
+    parser.add_argument("--square", action="store_true", help="force a square canvas; otherwise --size preserves the source aspect ratio")
     parser.add_argument("--colors", type=int, default=128)
     parser.add_argument("--fit", choices=["contain", "stretch"], default="contain")
     parser.add_argument("--background", default="auto", help="contain fill: auto, transparent, RRGGBB, or RRGGBBAA")
@@ -126,7 +136,14 @@ def main() -> None:
             source_frames.append(source.convert("RGBA"))
             source_durations.append(max(1, int(source.info.get("duration", 100))))
 
-    initial = (args.width or args.size, args.height or args.size)
+    if (args.width is None) != (args.height is None):
+        raise SystemExit("--width and --height must be supplied together")
+    if args.width is not None and args.height is not None:
+        initial = (args.width, args.height)
+    elif args.square:
+        initial = (args.size, args.size)
+    else:
+        initial = aspect_preserving_size(source_frames[0].size, args.size)
     if min(initial) < 16:
         raise SystemExit("width and height must be at least 16")
     size_options = [initial] if args.preserve_size or args.max_bytes is None else size_candidates(initial, args.min_size)

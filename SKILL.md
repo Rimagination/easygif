@@ -23,21 +23,33 @@ Convert a natural-language visual request into a structured asset plan, an image
    - use a video workflow only when the motion cannot be represented by keyframes plus interpolation;
    - after a contact sheet is generated, run scripts/validate_grid_geometry.py against the planned rows, columns, and source aspect before treating it as animation frames;
    - if the grid fails validation or the frames contain merged/cross-cell content, fall back to independent generation.
+   - honor the route's `composition_contract`: a `full_frame` route stays full-frame; a `static_base_plus_patch` route requires explicit alpha, a supplied mask, or a deterministic parametric patch.
 8. Choose a deterministic pipeline:
    - fixed-cell animation or game assets: scripts/slice_grid.py, then frame validation and GIF/WebP preview;
    - independent opaque keyframes with gentle continuous motion: run scripts/film_interpolate.py with the project-local FILM environment, then scripts/compose_gif.py and scripts/optimize_gif.py;
    - existing video or dense motion: extract frames with the host's video tooling, then validate and assemble;
    - video input for a direct chat GIF: use scripts/video_to_gif.py, then validate the result;
-   - local layer or masked edit: use scripts/composite_layers.py, then scripts/region_validate.py before encoding;
-   - transparent subject: use the built-in chroma-key/background-removal path first, then inspect edge spill;
+   - local layer or masked edit: use scripts/composite_layers.py, then scripts/region_validate.py and scripts/composite_validate.py before encoding;
+   - transparent subject: use explicit alpha or a validated segmentation/mask. Use chroma key only when the source background is deliberately flat and the key color is known; never infer a foreground from approximate colors in a textured, blurred, or photographic background;
    - ordinary cinematic visuals: prefer MP4/WebM and create GIF only as a preview or when requested;
    - chat stickers: use short looping output, small dimensions, palette optimization, and aspect-preserving contain fit by default.
 9. If the user has not specified a motion, compile a conservative starting recipe with scripts/motion_recipe.py. Replace its subject and region hints after inspecting the image; do not present the recipe as if it were semantic image segmentation. Generate a timeline with scripts/motion_timeline.py when timing or keyframe count is not explicit. Prefer phase-weighted timing with rest, anticipation, action, peak, return, and settle instead of equal frame spacing. When a grid is useful, run scripts/grid_plan.py with role `generation` for a one-pass image/contact sheet or role `packaging` for existing frames, video, or interpolation output. Infer the active frame count and rows×columns from the Motion IR and source/canvas aspect ratio; never assume 3×3.
 10. Use scripts/media_budget.py to preserve source aspect ratio and choose a candidate output size under the stated byte budget. Verify the actual encoded file; the estimate is not a guarantee.
-11. Run scripts/temporal_validate.py on generated keyframes or dense frames. For local or clustered motion, also run scripts/region_validate.py against the approved region. Inspect any spike boundaries or outside-region violations and either revise the keyframe plan, tighten the mask, localize the edit, or fall back to a simpler representation.
+11. Run scripts/temporal_validate.py on generated keyframes or dense frames. Run scripts/region_validate.py and scripts/composite_validate.py only when the route explicitly uses a static base plus a patch/mask. For full-frame contact sheets or full-frame keyframes, a region report is diagnostic evidence of scene drift, not permission to cut out the subject. Inspect any spike boundaries, outside-region violations, or seam-risk frames and either regenerate full frames with locked invariants or repair a trusted local mask.
 12. Run scripts/validate_output.py on every final asset with `--json`, checking actual bytes, format, frame count, loop metadata, alpha, and source aspect. Use scripts/optimize_gif.py with `--max-bytes` for chat/GIF budgets; its estimate is not a substitute for the encoded-file check.
 13. Write a manifest beside each final output with scripts/write_manifest.py. Include the route plan and every validation report. Report assumptions and any remaining visual limitations.
-14. When a validation stage fails, run scripts/repair_plan.py before regenerating. Follow its route recommendation: geometry failures require replanning/regeneration, temporal spikes require timeline/keyframe repair, region failures require mask/patch repair, and budget failures are handled only after visual validation.
+14. When a validation stage fails, run scripts/repair_plan.py before regenerating and pass `--route route.json` when available. Follow its route-aware recommendation: geometry failures require replanning/regeneration, temporal spikes require timeline/keyframe repair, region failures require mask/patch repair only for a layer route and require full-frame regeneration for a full-frame route, and budget failures are handled only after visual validation.
+
+## Frame representation contract
+
+Keep these two representations separate throughout a task:
+
+- **Full-frame**: every frame contains the complete scene. Use for contact sheets, independent keyframes, video frames, and FILM output. Do not split a generated frame into “static background” and “moving subject” with a hand-written color threshold or an unverified mask.
+- **Static base plus patch**: the base is reused and only an explicit RGBA patch, parametric transform, or validated mask edit changes. The patch must be composited with the same canvas and then pass both region and boundary-spill validation.
+
+When full-frame frames drift outside the intended motion region, prefer regenerating the full frame with stronger invariants, reducing motion amplitude, using fewer keyframes, or switching to a video/keyframe route. Do not hide the drift by pasting a roughly extracted subject onto the first background: that creates halos, white/green fringes, double edges, and apparent scene tearing.
+
+For any local composite, inspect the first, middle, last, and loop-boundary frames at 1:1. A frame can pass a bounding-box test and still fail visually at the mask edge; `scripts/composite_validate.py` treats changes in the outside boundary ring as seam risk.
 
 ## Decision rules
 
@@ -60,8 +72,10 @@ Convert a natural-language visual request into a structured asset plan, an image
 - Treat 4×4/16 cells as a practical upper candidate for generic single-pass image generation, not as a universal optimum. Allow denser 5×5/6×6 layouts mainly for packaging or specialized sprite models.
 - Separate generated/keyframe count from playback frame count: use timing, holds, and interpolation to make a short clean source sequence feel fluid.
 - Treat a large adjacent-frame difference as a planning failure first, not as a reason to increase interpolation strength.
-- For local or clustered motion, keep a static base layer and require an explicit region, bounding box, or mask. Do not redraw the whole scene when a patch can express the action.
+- When the route selects layer compositing, keep a static base layer and require an explicit region, bounding box, or mask. Do not redraw the whole scene when a trusted patch can express the action; do not force a layer route merely because the semantic scope is local or clustered.
 - Treat outside-region drift as a hard validation signal: fix the region/mask or keyframes before optimizing GIF size.
+- Never use a region failure from a full-frame route as evidence that an approximate foreground/background split is safe.
+- Preserve a source's aspect ratio by default. Use an explicit square canvas only when the user or platform contract requires it; do not let a generic `--size 240` silently turn a portrait or landscape source into 240×240.
 
 ## Prompt construction
 
@@ -87,6 +101,7 @@ elements, and why the selected route is likely to be stable.
 - scripts/temporal_validate.py: detect frame-size mismatches and abrupt temporal difference spikes.
 - scripts/composite_layers.py: apply ordered local RGBA patches or masked full-frame edits to a static base.
 - scripts/region_validate.py: measure whether adjacent changes stay inside an approved region.
+- scripts/composite_validate.py: check a static-base composite for outside drift and mask-edge spill.
 - scripts/validate_output.py: check image readability, dimensions, frame counts, alpha presence, and basic animation metadata.
 - scripts/motion_recipe.py: compile a conservative, object-agnostic motion concept when the user supplies no action.
 - scripts/write_manifest.py: record the media, route, motion concept, and validation reports beside an output.

@@ -25,7 +25,14 @@ FALLBACKS = {
     "local_keyframes_then_interpolation": ["full_keyframes_then_interpolation", "contact_sheet"],
     "full_keyframes_then_interpolation": ["contact_sheet", "video_source"],
     "keyframes_then_interpolation": ["contact_sheet", "video_source"],
-    "contact_sheet": ["independent_keyframes", "local_layers"],
+    "contact_sheet": ["independent_keyframes", "full_keyframes_then_interpolation"],
+}
+
+
+LAYER_STRATEGIES = {
+    "alpha_safe_layers",
+    "parametric_or_local_layers",
+    "local_keyframes_then_interpolation",
 }
 
 
@@ -55,6 +62,7 @@ def choose(args: argparse.Namespace) -> dict[str, object]:
         grid_role = "generation" if strategy == "contact_sheet" or args.input_source == "still" else "packaging"
     else:
         grid_role = args.grid_role
+    uses_layer_compositing = strategy in LAYER_STRATEGIES
     grid = recommend(
         requested_frames=args.frames or None,
         scope=args.scope,
@@ -74,9 +82,14 @@ def choose(args: argparse.Namespace) -> dict[str, object]:
     validators = ["validate_output", "temporal_validate"]
     if grid_role == "generation" or strategy == "contact_sheet":
         validators.insert(0, "validate_grid_geometry")
-    if args.scope in {"local", "cluster"}:
-        validators.append("region_validate")
+    if uses_layer_compositing:
+        validators.extend(["region_validate", "composite_validate"])
     validators.append("media_budget")
+    region_repair_policy = (
+        "repair_trusted_mask_or_patch; never use approximate color extraction"
+        if uses_layer_compositing
+        else "treat as full_frame_drift; regenerate full frames and do not split the subject from the background"
+    )
     return {
         "plan_version": "easygif/route-v1",
         "strategy": strategy,
@@ -85,8 +98,18 @@ def choose(args: argparse.Namespace) -> dict[str, object]:
         "recommended_fps": 8 if "interpolation" in strategy or strategy == "video_extract" else 6,
         "preserve_aspect_ratio": True,
         "film_allowed": "interpolation" in strategy,
-        "preserve_static_base": args.scope in {"local", "cluster"},
-        "requires_region_validation": args.scope in {"local", "cluster"},
+        "preserve_static_base": uses_layer_compositing,
+        "requires_region_validation": uses_layer_compositing,
+        "composition_contract": {
+            "mode": "static_base_plus_patch" if uses_layer_compositing else "full_frame",
+            "mask_policy": (
+                "explicit_alpha_or_validated_mask_only"
+                if uses_layer_compositing
+                else "do_not_split_generated_full_frames"
+            ),
+            "seam_policy": "reject_unvalidated_cutout_edges_and_outside_region_drift",
+            "full_frame_region_check": "diagnostic_only",
+        },
         "grid_primary": strategy == "contact_sheet",
         "grid_role": grid_role,
         "target_format": target_format,
@@ -97,7 +120,7 @@ def choose(args: argparse.Namespace) -> dict[str, object]:
         "repair_policy": {
             "geometry": "regenerate_or_replan; never crop_or_stretch_as_repair",
             "temporal": "repair keyframe phases or reduce motion; do not blindly increase interpolation",
-            "region": "tighten_mask_or_patch before encoding",
+            "region": region_repair_policy,
             "budget": "reduce colors, then dimensions, then playback frames",
         },
         "grid_plan": grid,

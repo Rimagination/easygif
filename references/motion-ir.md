@@ -25,8 +25,9 @@ fixed.
 
 ## Routing dimensions
 
-- `scope`: local changes are candidates for masks or compositing; scene-wide
-  changes need full-frame keyframes or video.
+- `scope`: local changes are candidates for masks or compositing only when an
+  explicit region/alpha source exists; scene-wide changes need full-frame
+  keyframes or video.
 - `region`: a semantic target must become a bounding box or mask before
   deterministic compositing. If the region is unknown, use a conservative
   region estimate and validate it before encoding the final asset.
@@ -36,10 +37,11 @@ fixed.
 - `continuity`: high continuity favors dense keyframes or a video source;
   low continuity can use a contact sheet.
 - `invariants`: the more invariants there are, the more the pipeline should
-  preserve a static base layer and animate only approved regions.
-- `base_layer` and `layer_strategy`: local motion should normally reuse the
-  unchanged base and apply a patch or masked edit. This prevents the generator
-  from redrawing unrelated background pixels on every frame.
+  lock camera/background/text in full-frame keyframes or use a trusted static
+  base; never invent a pixel mask just to satisfy the invariant.
+- `base_layer` and `layer_strategy`: reuse the unchanged base only when the
+  route has an explicit patch, alpha, or validated mask. Otherwise keep the
+  entire generated frame intact.
 - `representation`: select the cheapest representation that can express the
   requested motion without inventing topology.
 - `grid`: a contact sheet is an intermediate representation, not a default
@@ -58,4 +60,11 @@ For a local or clustered action, the generated frames must satisfy two
 conditions: the approved region changes enough to express the action, and the
 pixels outside that region remain stable within a small tolerance. Use
 `scripts/composite_layers.py` to enforce the first condition structurally and
-`scripts/region_validate.py` to measure the second condition after compositing.
+`scripts/region_validate.py` plus `scripts/composite_validate.py` to measure
+outside drift and mask-edge spill after compositing. These checks apply only
+when the representation is explicitly `static_base_plus_patch`.
+
+For a full-frame contact sheet or full-frame keyframe sequence, a local-region
+check is diagnostic: it can reveal that the generator changed the background,
+but it must not trigger an improvised foreground extraction. Regenerate the
+full frame or switch representation instead.

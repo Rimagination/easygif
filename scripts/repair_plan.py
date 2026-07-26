@@ -19,10 +19,30 @@ def load_reports(paths: list[Path]) -> list[tuple[str, dict[str, object]]]:
     return reports
 
 
-def plan_repairs(reports: list[tuple[str, dict[str, object]]]) -> dict[str, object]:
+def load_route(path: Path | None) -> dict[str, object] | None:
+    if path is None:
+        return None
+    try:
+        value = json.loads(path.read_text(encoding="utf-8-sig"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise SystemExit(f"invalid route plan {path}: {exc}") from exc
+    if not isinstance(value, dict):
+        raise SystemExit(f"route plan must be an object: {path}")
+    return value
+
+
+def plan_repairs(
+    reports: list[tuple[str, dict[str, object]]],
+    route: dict[str, object] | None = None,
+) -> dict[str, object]:
     issues = []
     actions = []
     next_route = None
+    composition = route.get("composition_contract", {}) if route else {}
+    # A missing route is intentionally conservative: a report alone does not
+    # prove that a trustworthy alpha/mask exists, so never recommend an
+    # improvised layer repair by default.
+    full_frame_route = composition.get("mode") != "static_base_plus_patch"
     for name, report in reports:
         if report.get("passed", True):
             continue
@@ -35,9 +55,18 @@ def plan_repairs(reports: list[tuple[str, dict[str, object]]]) -> dict[str, obje
             next_route = next_route or "keyframes_then_interpolation"
         elif "violations" in report or "outside_ratio" in str(report):
             issue["kind"] = "region"
-            actions.append("tighten the region or mask and regenerate only the local patch")
-            actions.append("keep the static base layer and re-run region validation before encoding")
-            next_route = next_route or "parametric_or_local_layers"
+            if full_frame_route:
+                issue["interpretation"] = "full-frame scene drift, not permission to cut out a subject"
+                actions.append("treat the region report as a diagnostic of full-frame drift")
+                actions.append("do not derive a foreground mask from approximate colors or paste a generated subject onto a static background")
+                actions.append("regenerate full-frame keyframes/contact-sheet frames with locked camera, background, and text")
+                actions.append("run temporal and output validation again; use a layer route only when an explicit alpha/mask exists")
+                next_route = next_route or "contact_sheet"
+            else:
+                actions.append("tighten the region or mask and regenerate only the local patch")
+                actions.append("keep the static base layer and re-run region and composite validation before encoding")
+                actions.append("reject the composite if the mask boundary changes outside the approved region")
+                next_route = next_route or "parametric_or_local_layers"
         elif "aspect" in reason or "divisible" in report or "cell_relative_error" in report:
             issue["kind"] = "geometry"
             actions.append("re-plan the grid using the actual source and atlas aspect")
@@ -68,10 +97,12 @@ def plan_repairs(reports: list[tuple[str, dict[str, object]]]) -> dict[str, obje
         "issues": issues,
         "actions": deduped_actions,
         "recommended_next_route": next_route,
+        "composition_mode": composition.get("mode", "unspecified"),
         "do_not": [
             "do not hide a geometry failure by cropping",
             "do not use stronger interpolation to conceal inconsistent keyframes",
             "do not optimize bytes before spatial and temporal validation passes",
+            "do not convert a full-frame drift failure into an unvalidated foreground/background split",
         ],
     }
 
@@ -79,9 +110,10 @@ def plan_repairs(reports: list[tuple[str, dict[str, object]]]) -> dict[str, obje
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--report", type=Path, action="append", required=True)
+    parser.add_argument("--route", type=Path, help="optional route.json used to distinguish full-frame drift from layer failure")
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
-    result = plan_repairs(load_reports(args.report))
+    result = plan_repairs(load_reports(args.report), load_route(args.route))
     text = json.dumps(result, ensure_ascii=False, indent=2) + "\n"
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)
