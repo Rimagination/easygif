@@ -44,6 +44,86 @@ def sample_indices(total: int, requested: int) -> list[int]:
     return result
 
 
+def has_transparency(frame: Image.Image) -> bool:
+    if "A" not in frame.getbands():
+        return False
+    return frame.getchannel("A").getextrema()[0] < 255
+
+
+def build_shared_palette(frames: list[Image.Image], colors: int) -> Image.Image | None:
+    """Build one stable RGB palette for opaque frames.
+
+    Per-frame adaptive palettes can make a textured background shimmer even
+    when the source is static. A shared palette keeps similar colors mapped to
+    the same indices across the animation. Transparent frames use the
+    alpha-safe fallback in ``encode_gif`` because GIF transparency needs
+    special handling and should not be flattened implicitly.
+    """
+    if not frames or any(has_transparency(frame) for frame in frames):
+        return None
+    width, height = frames[0].size
+    atlas = Image.new("RGB", (width, height * len(frames)), "white")
+    try:
+        for index, frame in enumerate(frames):
+            atlas.paste(frame.convert("RGB"), (0, index * height))
+        return atlas.quantize(
+            colors=colors,
+            method=Image.Quantize.MEDIANCUT,
+            dither=Image.Dither.NONE,
+        )
+    finally:
+        atlas.close()
+
+
+def index_frames(
+    frames: list[Image.Image],
+    colors: int,
+    dither: Image.Dither,
+) -> tuple[list[Image.Image], int | None]:
+    """Quantize frames with a stable palette and preserve binary GIF alpha."""
+    palette = build_shared_palette(frames, colors)
+    indexed: list[Image.Image] = []
+    transparent_index: int | None = None
+    try:
+        if palette is not None:
+            for frame in frames:
+                indexed.append(frame.convert("RGB").quantize(palette=palette, dither=dither))
+            return indexed, None
+
+        if any(has_transparency(frame) for frame in frames):
+            transparent_index = colors - 1
+            for frame in frames:
+                # Reserve one palette entry for GIF's single transparent index.
+                current = frame.convert("RGB").quantize(
+                    colors=max(2, colors - 1),
+                    dither=dither,
+                )
+                palette_values = list(current.getpalette() or [])
+                palette_values.extend([0] * (768 - len(palette_values)))
+                offset = transparent_index * 3
+                palette_values[offset:offset + 3] = [0, 0, 0]
+                current.putpalette(palette_values[:768])
+                alpha = frame.getchannel("A")
+                pixels = list(current.getdata())
+                alpha_values = list(alpha.getdata())
+                current.putdata(
+                    [
+                        transparent_index if value < 128 else pixel
+                        for pixel, value in zip(pixels, alpha_values)
+                    ]
+                )
+                alpha.close()
+                indexed.append(current)
+            return indexed, transparent_index
+
+        for frame in frames:
+            indexed.append(frame.quantize(colors=colors, dither=dither))
+        return indexed, None
+    finally:
+        if palette is not None:
+            palette.close()
+
+
 def encode_gif(
     source_frames: list[Image.Image],
     source_durations: list[int],
@@ -53,27 +133,36 @@ def encode_gif(
     colors: int,
     fit: str,
     background: str,
+    dither: Image.Dither,
 ) -> None:
+    prepared = []
     frames = []
     durations = []
     try:
         for position, index in enumerate(indices):
             converted = fit_frame(source_frames[index], size, fit, background)
-            frames.append(converted.convert("P", palette=Image.Palette.ADAPTIVE, colors=colors))
-            converted.close()
+            prepared.append(converted)
             next_index = indices[position + 1] if position + 1 < len(indices) else len(source_frames)
             durations.append(max(1, sum(source_durations[index:next_index])))
+        frames, transparent_index = index_frames(prepared, colors, dither)
+        save_options = {
+            "save_all": True,
+            "append_images": frames[1:],
+            "duration": durations,
+            "loop": 0,
+            "optimize": True,
+            "disposal": 2,
+            "format": "GIF",
+        }
+        if transparent_index is not None:
+            save_options["transparency"] = transparent_index
         frames[0].save(
             output,
-            save_all=True,
-            append_images=frames[1:],
-            duration=durations,
-            loop=0,
-            optimize=True,
-            disposal=2,
-            format="GIF",
+            **save_options,
         )
     finally:
+        for frame in prepared:
+            frame.close()
         for frame in frames:
             frame.close()
 
@@ -108,9 +197,15 @@ def main() -> None:
     parser.add_argument("--width", type=int)
     parser.add_argument("--height", type=int)
     parser.add_argument("--square", action="store_true", help="force a square canvas; otherwise --size preserves the source aspect ratio")
-    parser.add_argument("--colors", type=int, default=128)
+    parser.add_argument("--colors", type=int, default=256)
     parser.add_argument("--fit", choices=["contain", "stretch"], default="contain")
     parser.add_argument("--background", default="auto", help="contain fill: auto, transparent, RRGGBB, or RRGGBBAA")
+    parser.add_argument(
+        "--dither",
+        choices=["none", "floyd-steinberg"],
+        default="none",
+        help="palette dithering; none avoids colored speckles in textured illustrations",
+    )
     parser.add_argument("--max-bytes", type=int, help="retry colors, dimensions, and frame count until this budget is met")
     parser.add_argument("--min-colors", type=int, choices=[32, 64, 128, 256], default=32)
     parser.add_argument("--min-size", type=int, default=64)
@@ -158,6 +253,7 @@ def main() -> None:
         ]
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
+    dither = Image.Dither.NONE if args.dither == "none" else Image.Dither.FLOYDSTEINBERG
     temporary = args.output.with_name(args.output.name + ".tmp")
     best_size = None
     accepted = False
@@ -166,7 +262,17 @@ def main() -> None:
             indices = sample_indices(len(source_frames), frame_count)
             for size in size_options:
                 for colors in color_options:
-                    encode_gif(source_frames, source_durations, indices, temporary, size, colors, args.fit, args.background)
+                    encode_gif(
+                        source_frames,
+                        source_durations,
+                        indices,
+                        temporary,
+                        size,
+                        colors,
+                        args.fit,
+                        args.background,
+                        dither,
+                    )
                     actual_size = temporary.stat().st_size
                     best_size = (actual_size, size, colors, len(indices))
                     if args.max_bytes is None or actual_size <= args.max_bytes:

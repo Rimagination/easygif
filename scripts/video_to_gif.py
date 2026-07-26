@@ -9,6 +9,11 @@ from pathlib import Path
 
 from PIL import Image
 
+try:
+    from optimize_gif import index_frames
+except ImportError:  # pragma: no cover - supports package-style imports
+    from .optimize_gif import index_frames
+
 
 def probe_dimensions(ffprobe: str, path: Path) -> tuple[int, int]:
     try:
@@ -48,7 +53,8 @@ def main() -> None:
     parser.add_argument("--square", action="store_true", help="force a square canvas; otherwise --size preserves the source aspect ratio")
     parser.add_argument("--fit", choices=["contain", "stretch"], default="contain")
     parser.add_argument("--background", default="000000", help="contain padding color as RRGGBB")
-    parser.add_argument("--colors", type=int, choices=[32, 64, 128, 256], default=128)
+    parser.add_argument("--colors", type=int, choices=[32, 64, 128, 256], default=256)
+    parser.add_argument("--dither", choices=["none", "floyd-steinberg"], default="none")
     parser.add_argument("--start", type=float, default=0)
     parser.add_argument("--duration", type=float)
     args = parser.parse_args()
@@ -96,26 +102,33 @@ def main() -> None:
         if not paths:
             raise SystemExit("video produced no frames")
         frames = []
+        indexed = []
         try:
             for path in paths:
                 with Image.open(path) as image:
-                    frame = image.convert("RGBA").convert(
-                        "P", palette=Image.Palette.ADAPTIVE, colors=args.colors
-                    )
-                    frames.append(frame)
+                    frames.append(image.convert("RGBA"))
+            dither = Image.Dither.NONE if args.dither == "none" else Image.Dither.FLOYDSTEINBERG
+            indexed, transparent_index = index_frames(frames, args.colors, dither)
             args.output.parent.mkdir(parents=True, exist_ok=True)
             duration = max(1, round(1000 / args.fps))
-            frames[0].save(
+            save_options = {
+                "save_all": True,
+                "append_images": indexed[1:],
+                "duration": duration,
+                "loop": 0,
+                "optimize": True,
+                "disposal": 2,
+                "format": "GIF",
+            }
+            if transparent_index is not None:
+                save_options["transparency"] = transparent_index
+            indexed[0].save(
                 args.output,
-                save_all=True,
-                append_images=frames[1:],
-                duration=duration,
-                loop=0,
-                optimize=True,
-                disposal=2,
-                format="GIF",
+                **save_options,
             )
         finally:
+            for frame in indexed:
+                frame.close()
             for frame in frames:
                 frame.close()
     print(f"wrote {len(paths)} frames to {args.output} ({args.output.stat().st_size} bytes)")

@@ -5,6 +5,7 @@ import argparse
 import json
 
 from grid_plan import recommend
+from sticker_package import load_profile
 
 
 BACKENDS = {
@@ -32,20 +33,26 @@ FALLBACKS = {
 LAYER_STRATEGIES = {
     "alpha_safe_layers",
     "parametric_or_local_layers",
-    "local_keyframes_then_interpolation",
 }
 
 
 def choose(args: argparse.Namespace) -> dict[str, object]:
+    explicit_layer_source = any(
+        getattr(args, name, False)
+        for name in ("trusted_region", "alpha_patch", "parametric_patch")
+    )
     if args.preserve_alpha:
         strategy = "alpha_safe_layers"
         reason = "preserve alpha with layered or mask-based compositing"
     elif args.input_source == "video":
         strategy = "video_extract"
         reason = "an existing video is the strongest temporal source"
-    elif args.scope == "local" and args.family in {"transform", "appearance", "periodic"}:
+    elif args.scope == "local" and args.family in {"transform", "appearance", "periodic"} and explicit_layer_source:
         strategy = "parametric_or_local_layers"
-        reason = "a constrained local change can be rendered without redrawing the scene"
+        reason = "an explicit trusted region, alpha patch, or parametric patch can preserve the static base"
+    elif args.scope in {"local", "cluster"} and args.family in {"transform", "appearance", "periodic"}:
+        strategy = "local_keyframes_then_interpolation" if args.continuity == "high" else "contact_sheet"
+        reason = "the motion is semantically local but no trusted pixel region was supplied; keep generated frames whole"
     elif args.scope in {"local", "cluster"} and args.continuity == "high":
         strategy = "local_keyframes_then_interpolation"
         reason = "high continuity is safer when interpolation is restricted to the moving region"
@@ -62,7 +69,10 @@ def choose(args: argparse.Namespace) -> dict[str, object]:
         grid_role = "generation" if strategy == "contact_sheet" or args.input_source == "still" else "packaging"
     else:
         grid_role = args.grid_role
-    uses_layer_compositing = strategy in LAYER_STRATEGIES
+    uses_layer_compositing = (
+        strategy in LAYER_STRATEGIES
+        or (strategy == "local_keyframes_then_interpolation" and explicit_layer_source)
+    )
     grid = recommend(
         requested_frames=args.frames or None,
         scope=args.scope,
@@ -76,9 +86,12 @@ def choose(args: argparse.Namespace) -> dict[str, object]:
         max_cells=args.max_grid_cells,
         max_grid_side=args.max_grid_side,
     )
+    profile = load_profile(args.platform_profile) if getattr(args, "platform_profile", None) else None
+    profile_max_bytes = (profile.get("main", {}).get("max_bytes") if profile else None) or 0
+    effective_max_bytes = args.max_bytes or profile_max_bytes
     target_format = args.target_format
     if target_format == "auto":
-        target_format = "gif" if args.max_bytes else "webp_or_mp4"
+        target_format = "gif" if effective_max_bytes else "webp_or_mp4"
     validators = ["validate_output", "temporal_validate"]
     if grid_role == "generation" or strategy == "contact_sheet":
         validators.insert(0, "validate_grid_geometry")
@@ -113,6 +126,19 @@ def choose(args: argparse.Namespace) -> dict[str, object]:
         "grid_primary": strategy == "contact_sheet",
         "grid_role": grid_role,
         "target_format": target_format,
+        "platform_profile": profile.get("id") if profile else None,
+        "platform_contract": {
+            "formats": profile.get("main", {}).get("formats", []) if profile else [],
+            "width": profile.get("main", {}).get("width") if profile else None,
+            "height": profile.get("main", {}).get("height") if profile else None,
+            "max_bytes": effective_max_bytes or None,
+            "aspect_policy": profile.get("main", {}).get("aspect_policy") if profile else "preserve",
+        },
+        "layer_source": {
+            "explicit": explicit_layer_source,
+            "required_for_layer_route": True,
+            "flags": [name for name in ("trusted_region", "alpha_patch", "parametric_patch") if getattr(args, name, False)],
+        },
         "backend_candidates": BACKENDS[strategy],
         "fallbacks": FALLBACKS[strategy],
         "validators": validators,
@@ -149,6 +175,10 @@ def main() -> None:
     parser.add_argument("--max-bytes", type=int, default=0)
     parser.add_argument("--has-video", action="store_true")
     parser.add_argument("--transparent", action="store_true")
+    parser.add_argument("--trusted-region", action="store_true", help="an explicit validated region or mask is available")
+    parser.add_argument("--alpha-patch", action="store_true", help="ordered RGBA patches are available")
+    parser.add_argument("--parametric-patch", action="store_true", help="a deterministic local transform is available")
+    parser.add_argument("--platform-profile", help="built-in profile name or JSON path, e.g. wechat-chat")
     args = parser.parse_args()
     if args.has_video:
         args.input_source = "video"

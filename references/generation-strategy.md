@@ -54,6 +54,18 @@ not a geometry repair. For GIF budgets, let `scripts/optimize_gif.py` retry
 colors, dimensions, and playback frame count, then validate the actual file
 with `scripts/validate_output.py --max-bytes`.
 
+### GIF encoding quality gate
+
+For hand-drawn, photographic, or textured frames, start with a shared
+256-color palette and no dithering. Per-frame adaptive palettes and
+Floyd–Steinberg dithering can turn paper grain, fur, soft gradients, or
+anti-aliased lines into colored speckles and frame-to-frame shimmer. Reduce
+colors only after the actual file exceeds the byte budget. For transparent
+subjects, reserve and validate a GIF transparency index; never trade away
+alpha just to meet a size target. Use `scripts/finalize_gif.py` after any
+staging encode so the final path, size, aspect, frame count, loop, and alpha
+contract are checked together.
+
 ## Full-frame versus layered representation
 
 This is a representation boundary, not a scene category:
@@ -99,6 +111,8 @@ After generation:
 4. Inspect the contact sheet and at least the first, middle, and last frame.
 5. Reject the strategy if the model merged cells, changed identity, or
    changed the intended framing. Do not crop the content to hide the failure.
+6. Treat the staged GIF as non-deliverable. Run `scripts/finalize_gif.py`,
+   inspect its delivery report, and only then expose the final file.
 
 ## Independent-frame fallback
 

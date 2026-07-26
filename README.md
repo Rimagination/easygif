@@ -4,97 +4,76 @@
 
 <p align="center">
   <a href="SKILL.md"><img alt="SKILL: EasyGIF" src="https://img.shields.io/badge/SKILL-EasyGIF-7B4CC2?style=for-the-badge&labelColor=555555"></a>
-  <a href="scripts/validate_output.py"><img alt="OUTPUT: validated media" src="https://img.shields.io/badge/OUTPUT-VALIDATED_MEDIA-2FA36B?style=for-the-badge&labelColor=555555"></a>
-  <a href="tests/test_easygif.py"><img alt="TESTS: Python unittest" src="https://img.shields.io/badge/TESTS-PYTHON_UNITTEST-268BD2?style=for-the-badge&labelColor=555555"></a>
   <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/LICENSE-MIT-FF6699?style=for-the-badge&labelColor=555555"></a>
 </p>
 
 # EasyGIF
 
-把一张静态图变成自然、可控、可交付的动图或视觉动效素材。
+想让一张图片动起来，却不知道动作怎么设计、提示词怎么写，最后还总是卡顿、变形或发不出去？
 
-EasyGIF 是一个面向 Codex 的通用视觉动效 skill。它不要求用户先判断自己属于“动物、人物、游戏道具或表情包”哪一种场景，而是先分析画面中的运动范围、连续性、透明度、构图和交付约束，再选择宫格、局部图层、关键帧、视频抽帧或插帧路线。
+EasyGIF 只需要一句话：它会自己设计自然动作，保持主体和画面一致，自动选择合适的制作路线，并交付可以直接发送的 GIF。
 
 ## 一分钟开始
 
-先检查本地能力：
+### 快速安装
 
-```powershell
-python scripts/probe_backends.py
+将仓库克隆到 Codex 的 Skill 目录，重启 Codex：
+
+```bash
+git clone https://github.com/Rimagination/easygif.git ~/.codex/skills/easygif
 ```
 
-然后让 Codex 使用仓库根目录的 `SKILL.md`：
+基础 GIF 需要 Python、Pillow；视频路线需要 `ffmpeg`。没有参考图也可以直接描述主体和动作。
+
+### 案例一：无参考图
+
+不提供图片，直接告诉 Codex：
 
 ```text
-请使用 EasyGIF，把这张图片变成一个自然循环的动图。
-如果我没有描述动作，请先根据画面设计一个低风险、可循环的动作。
-保持原图比例，不要裁切；最终输出经过帧连续性和文件大小检查。
+做一个手绘猫猫打哈欠的gif
 ```
 
-## 它如何工作
+<p align="center">
+  <img src="gallery/cat-yawn-handdrawn.gif" alt="手绘猫猫打哈欠 GIF" width="240">
+</p>
 
-1. **预检**：记录输入尺寸、透明度、主体与背景不变量，以及用户的交付目标。
-2. **动作编译**：把自然语言或自动推断的动作转成 Motion IR，包括主动作、微动作、锁定区域和时间阶段。
-3. **能力路由**：按空间范围、运动连续性、输入来源、透明度和预算选择后端。
-4. **确定性处理**：切帧、合成、插帧、比例保护、编码和压缩由仓库脚本完成。
-5. **证据复核**：输出 geometry、temporal、region、budget、manifest 等报告；失败时生成下一步修复计划。
+[下载猫猫打哈欠 GIF](gallery/cat-yawn-handdrawn.gif)
 
-## 结果长什么样
+EasyGIF 会根据这句话自行确定主体参考、动作节奏和交付路线。
 
-每个任务都可以保留一条可复核链路：
+## 案例二：有参考图
+
+提供袋熊照片作为参考图，并告诉 Codex：
+
+### 微信表情包：袋熊挠屁股后看镜头
 
 ```text
-原图 / 参考图
-    → Motion IR 与 route plan
-    → 宫格、关键帧、局部层或视频帧
-    → GIF / WebP / MP4 / 精灵图 / PNG 帧
-    → validation reports + manifest.json
+我希望你基于这个图生成一个袋熊边挠屁股变看镜头的gif，同一只动物、同一机位、同一背景，只改变眼睛、草叶和身体的轻微动作。
 ```
 
-常见产物：
+<p align="center">
+  <img src="gallery/wombat-scratch-look-wechat.gif" alt="袋熊挠屁股后看镜头微信 GIF" width="240">
+</p>
 
-| 产物 | 用途 |
-|---|---|
-| `route.json` | 记录选择的表示方式、后端、fallback 和验证器 |
-| `frames/` 或 `keyframes/` | 保留可检查的原始帧序列 |
-| `contact-sheet.png` | 检查宫格边界、主体一致性和动作节奏 |
-| `output.gif` / `output.webp` / `output.mp4` | 最终交付文件 |
-| `manifest.json` | 保存输入、动作、策略、尺寸、帧数和验证结果 |
-| `repair-plan.json` | 验证失败后的安全修复路线 |
+EasyGIF 会锁定参考图中的主体、机位和背景，再生成和压缩最终 GIF。
 
-## 核心脚本
+## 更多案例
 
-| 脚本 | 作用 |
-|---|---|
-| `scripts/motion_recipe.py` | 用户未指定动作时生成保守的动作配方 |
-| `scripts/select_strategy.py` | 选择宫格、图层、关键帧、视频或插帧路线 |
-| `scripts/grid_plan.py` | 自适应判断 2×2、3×3、4×4 等宫格 |
-| `scripts/optimize_gif.py` | 在实际字节预算下优化 GIF |
-| `scripts/validate_grid_geometry.py` | 防止错误宫格导致裁切或比例变化 |
-| `scripts/temporal_validate.py` | 检查帧间突变和循环边界 |
-| `scripts/region_validate.py` | 检查相邻帧的非目标区域是否被误改 |
-| `scripts/composite_validate.py` | 检查静态底图合成后的背景漂移和蒙版边缘溢出 |
-| `scripts/repair_plan.py` | 将失败报告编译成下一步修复动作 |
-| `scripts/write_manifest.py` | 写出可复核的 manifest |
+### 普通视觉素材：电影感光束
 
-## 开发与测试
+电影感视觉：保持城市构图，让柔和光束缓慢扫过画面。
 
-```powershell
-python -m unittest discover -s tests -v
-python "$env:USERPROFILE\.codex\skills\.system\skill-creator\scripts\quick_validate.py" .
+<p align="center">
+  <img src="gallery/cinematic-light-sweep.gif" alt="电影感光束扫过城市 GIF" width="480">
+</p>
+
+## 微信交付
+
+```text
+请把这些 GIF 打包成微信聊天表情，检查尺寸、大小、循环和缩略图。
 ```
 
-当前默认保持 `contain` 比例适配；`optimize_gif.py --size 240` 和 `video_to_gif.py --size 240` 默认把长边缩放到 240 并保留源比例，只有显式使用 `--square` 或同时指定 `--width/--height` 才会改变画布比例。除非用户明确要求，EasyGIF 不会用裁切或拉伸掩盖宫格几何错误。FILM 只用于不透明、同机位的关键帧；透明主体优先走 alpha-safe 图层或宫格路线。
-
-整帧生成、视频帧和 FILM 帧始终按完整画面处理。只有明确的 RGBA 补丁、可靠蒙版或确定性局部变换才允许使用“静态底图+局部层”；整帧背景漂移不能用近似颜色抠主体来修复，否则很容易出现白边、绿边、重影和画面割裂。局部合成必须同时通过 `region_validate.py` 与 `composite_validate.py`。
-
-## 参考思想
-
-仓库的组织方式参考了 [Rimagination/thu-digitizer](https://github.com/Rimagination/thu-digitizer) 的几个原则：统一预检入口、机器可读的能力注册、确定性执行、证据化产物、保守拒绝和可复核的项目画廊。EasyGIF 将这些原则应用到视觉动效生成，而不是图表数据提取。
-
-## 状态
-
-Incubating：核心自适应路由、宫格/图层/关键帧处理、P0–P3 质量门禁已经可用，后续继续扩展视频生成后端和更多 gallery 案例。
+开放平台投稿：让 EasyGIF 额外生成封面、图标和 Banner。
 
 ## 许可
 

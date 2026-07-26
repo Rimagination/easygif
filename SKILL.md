@@ -7,15 +7,49 @@ description: Turn natural-language requests and still images into adaptive, vali
 
 Convert a natural-language visual request into a structured asset plan, an image-generation prompt, deterministic post-processing steps, and validated deliverables.
 
+## Preflight before execution
+
+Before calling any image/video generator, FILM, encoder, or destructive repair,
+read `references/preflight.md` and create a compact production card. Show the
+card in commentary before execution, then proceed without asking the user to
+design the motion when a safe interpretation is available. Use
+`scripts/preflight_plan.py` when dimensions, route, or delivery constraints
+need a machine-readable plan.
+
+The card must name the goal, subject/reference, one primary motion, at most two
+micro-motions, locked invariants, representation, generation/playback plan,
+delivery contract, risks, and validation gates. Treat it as the source of truth
+for the execution that follows; if the route changes, update the card first.
+
+## Reference-first policy
+
+Resolve a canonical still reference before expensive animation work. Record
+`reference.source` as `user-provided`, `generated`, or `video-first-frame`, and
+`reference.status` as `locked` or `needs-user-selection`.
+
+- A supplied image is locked directly after structural inspection.
+- A supplied video keeps its video route, but first selects one representative
+  frame as the identity/style/composition reference.
+- With no image, generate one canonical still first. If the request is specific
+  enough, auto-lock it and continue; if subject, style, or scene is genuinely
+  ambiguous, generate 2–3 candidates, show them, and pause before animation.
+- If the user explicitly says to proceed without confirmation, auto-lock the
+  best candidate and record that decision in the manifest.
+- Keep the canonical reference as one still. Do not use a 3×3 or 4×4 atlas as
+  the identity reference; use the atlas only as a planned frame source.
+
 ## Workflow
 
+0. Resolve and expose the reference stage and production card before invoking any generator,
+   encoder, or repair step. Do not silently start with a prompt or a tool call.
+   If the card status is `needs-user-selection`, stop after showing candidates.
 1. Parse the request into the Prompt IR described in references/prompt-ir.md.
 2. Infer the intended use, visual language, motion, background, source dimensions, and output constraints. Treat the scene and object vocabulary as open-ended; do not force the request into a fixed asset category.
 3. Build a Motion IR using references/motion-ir.md. Describe scope, motion family, continuity, targets, the approved region or mask, invariants, base-layer policy, timeline, loop behavior, and representation before choosing tools.
 4. If the user has not specified an action, act as a motion director: read references/motion-director.md, infer a small number of plausible motions from the image, select one primary motion plus limited micro-motions, and state the choice before composing the prompt.
 5. Read only the relevant visual-language references under references/visual-language/ and compose a concise prompt. Preserve explicit user constraints; add inferred details only when they materially improve the result.
 6. Use the available image-generation capability for source imagery. For reference-guided work, keep the reference subject/style/layout invariants explicit in every iteration.
-7. Probe local optional backends with scripts/probe_backends.py, then select the generation strategy using references/generation-strategy.md, references/backend-capabilities.md, and scripts/select_strategy.py. Save the JSON route plan; it is the source of truth for backends, fallbacks, validators, and repair policy:
+7. Probe local optional backends with scripts/probe_backends.py, then select the generation strategy using references/generation-strategy.md, references/backend-capabilities.md, and scripts/select_strategy.py. Save the JSON route plan; it is the source of truth for backends, fallbacks, validators, and repair policy. A semantic description such as “only the hand moves” is not a pixel-accurate mask: only pass `--trusted-region`, `--alpha-patch`, or `--parametric-patch` when the route really has that source:
    - use scripts/select_strategy.py for a compact, auditable route recommendation;
    - for simple short loops, chat stickers, and low-risk expressions, prefer one generated contact sheet or sprite sheet;
    - for bounded local motion, prefer a static base plus patches or masked edits; use local keyframes and the optional FILM backend only inside the approved region when continuity requires it;
@@ -34,11 +68,14 @@ Convert a natural-language visual request into a structured asset plan, an image
    - ordinary cinematic visuals: prefer MP4/WebM and create GIF only as a preview or when requested;
    - chat stickers: use short looping output, small dimensions, palette optimization, and aspect-preserving contain fit by default.
 9. If the user has not specified a motion, compile a conservative starting recipe with scripts/motion_recipe.py. Replace its subject and region hints after inspecting the image; do not present the recipe as if it were semantic image segmentation. Generate a timeline with scripts/motion_timeline.py when timing or keyframe count is not explicit. Prefer phase-weighted timing with rest, anticipation, action, peak, return, and settle instead of equal frame spacing. When a grid is useful, run scripts/grid_plan.py with role `generation` for a one-pass image/contact sheet or role `packaging` for existing frames, video, or interpolation output. Infer the active frame count and rows×columns from the Motion IR and source/canvas aspect ratio; never assume 3×3.
-10. Use scripts/media_budget.py to preserve source aspect ratio and choose a candidate output size under the stated byte budget. Verify the actual encoded file; the estimate is not a guarantee.
-11. Run scripts/temporal_validate.py on generated keyframes or dense frames. Run scripts/region_validate.py and scripts/composite_validate.py only when the route explicitly uses a static base plus a patch/mask. For full-frame contact sheets or full-frame keyframes, a region report is diagnostic evidence of scene drift, not permission to cut out the subject. Inspect any spike boundaries, outside-region violations, or seam-risk frames and either regenerate full frames with locked invariants or repair a trusted local mask.
-12. Run scripts/validate_output.py on every final asset with `--json`, checking actual bytes, format, frame count, loop metadata, alpha, and source aspect. Use scripts/optimize_gif.py with `--max-bytes` for chat/GIF budgets; its estimate is not a substitute for the encoded-file check.
-13. Write a manifest beside each final output with scripts/write_manifest.py. Include the route plan and every validation report. Report assumptions and any remaining visual limitations.
-14. When a validation stage fails, run scripts/repair_plan.py before regenerating and pass `--route route.json` when available. Follow its route-aware recommendation: geometry failures require replanning/regeneration, temporal spikes require timeline/keyframe repair, region failures require mask/patch repair only for a layer route and require full-frame regeneration for a full-frame route, and budget failures are handled only after visual validation.
+10. Resolve the delivery target with a profile when one is named. Use `references/platforms/wechat-chat.json` for a conservative chat budget and `references/platforms/wechat-submit.json` for the stricter open-platform package. Keep platform constraints separate from creative and motion constraints; do not treat a chat GIF as a submission-ready sticker set.
+11. Use scripts/media_budget.py to preserve source aspect ratio and choose a candidate output size under the stated byte budget. Verify the actual encoded file; the estimate is not a guarantee.
+12. Run scripts/temporal_validate.py on generated keyframes or dense frames. Run scripts/visual_qa.py to produce a contact sheet and a human-reviewable report. Run scripts/region_validate.py and scripts/composite_validate.py only when the route explicitly uses a static base plus a patch/mask. For full-frame contact sheets or full-frame keyframes, a region report is diagnostic evidence of scene drift, not permission to cut out the subject. Inspect any spike boundaries, outside-region violations, or seam-risk frames and either regenerate full frames with locked invariants or repair a trusted local mask.
+13. Run scripts/validate_output.py on every final asset with `--json`, checking actual bytes, format, frame count, loop metadata, alpha, and source aspect. Use scripts/optimize_gif.py with `--max-bytes` for chat/GIF budgets; it starts with a shared 256-color palette and no dithering, then reduces only when the actual encoded file exceeds the budget. Its estimate is not a substitute for the encoded-file check.
+14. For a sticker set, copy ordered source files into a package with `scripts/package_sticker_set.py`, then run `scripts/validate_sticker_package.py`. The package must contain numbered stickers, derived 50×50 icons, a cover, `package-validation.json`, and `manifest.json`; submission profiles may also warn about missing banner or other promotional assets.
+15. Write a manifest beside each final output with scripts/write_manifest.py. Include the route plan, platform profile, motion concept, reference invariants, and every validation report. Report assumptions and any remaining visual limitations.
+16. When a validation stage fails, run scripts/repair_plan.py before regenerating and pass `--route route.json` when available. Follow its route-aware recommendation: geometry failures require replanning/regeneration, temporal spikes require timeline/keyframe repair, region failures require mask/patch repair only for a layer route and require full-frame regeneration for a full-frame route, and budget failures are handled only after visual validation.
+17. Treat every grid, source GIF, contact sheet, or interpolated sequence as a staging artifact. Before claiming completion, run scripts/finalize_gif.py for a GIF deliverable; it must create the final path, run the actual byte/geometry/frame/loop checks, write a delivery report, and return `status: delivered`. If it fails, report the failure and repair instead of linking the staging artifact.
 
 ## Frame representation contract
 
@@ -63,6 +100,7 @@ For any local composite, inspect the first, middle, last, and loop-boundary fram
 - Keep generation prompts explicit about grid rows, columns, cell boundaries, identical camera/framing, and no cross-cell elements.
 - Do not use FILM for transparent assets: its RGB output does not preserve alpha. Keep transparent pets on the grid or mask-based path.
 - Use FILM only after keyframes have the same subject identity, camera, background, and dimensions. Interpolation smooths motion; it does not correct inconsistent keyframes.
+- A local action without a trusted region remains a full-frame keyframe problem. Do not label `local_keyframes_then_interpolation` as a static-base composite unless the production card names an explicit alpha patch, validated mask, or deterministic local transform.
 - Treat video as the preferred motion source when the user provides one; do not regenerate a video from stills unless requested.
 - When inventing motion, prefer one readable action over many simultaneous actions. Preserve the source image's medium: illustrated images should use limited animation, not photorealistic deformation.
 - Do not maintain a closed list of supported scenes. Extend the semantic target vocabulary as needed while routing by Motion IR dimensions.
@@ -73,6 +111,7 @@ For any local composite, inspect the first, middle, last, and loop-boundary fram
 - Separate generated/keyframe count from playback frame count: use timing, holds, and interpolation to make a short clean source sequence feel fluid.
 - Treat a large adjacent-frame difference as a planning failure first, not as a reason to increase interpolation strength.
 - When the route selects layer compositing, keep a static base layer and require an explicit region, bounding box, or mask. Do not redraw the whole scene when a trusted patch can express the action; do not force a layer route merely because the semantic scope is local or clustered.
+- A local semantic target without a trusted pixel source remains a full-frame generation problem. Never infer a foreground mask from the words “only X moves”; record the target semantically and use a whole-frame/keyframe route until a mask, alpha patch, or deterministic transform exists.
 - Treat outside-region drift as a hard validation signal: fix the region/mask or keyframes before optimizing GIF size.
 - Never use a region failure from a full-frame route as evidence that an approximate foreground/background split is safe.
 - Preserve a source's aspect ratio by default. Use an explicit square canvas only when the user or platform contract requires it; do not let a generic `--size 240` silently turn a portrait or landscape source into 240×240.
@@ -91,6 +130,7 @@ elements, and why the selected route is likely to be stable.
 - scripts/atlas_to_gif.py: crop a contact sheet and assemble the frames into a GIF/WebP in one deterministic command.
 - scripts/compose_gif.py: assemble an ordered frame directory into a looping GIF or animated WebP.
 - scripts/optimize_gif.py: resize and palette-optimize an animated GIF for chat sticker limits.
+- scripts/finalize_gif.py: convert a staged GIF into a validated final deliverable and delivery report.
 - scripts/film_interpolate.py: run local FILM on ordered opaque keyframes to create smooth intermediate frames.
 - scripts/select_strategy.py: recommend contact-sheet, keyframe/FILM, video, or alpha-safe routing from task flags.
 - scripts/video_to_gif.py: extract, resize, retime, palette-optimize, and loop an existing video as a GIF.
@@ -99,12 +139,18 @@ elements, and why the selected route is likely to be stable.
 - scripts/validate_grid_geometry.py: reject atlas dimensions or cell aspect ratios that disagree with the plan before slicing.
 - scripts/media_budget.py: suggest aspect-preserving dimensions under a byte budget.
 - scripts/temporal_validate.py: detect frame-size mismatches and abrupt temporal difference spikes.
+- scripts/visual_qa.py: create a contact sheet and deterministic temporal/alpha review report.
+- scripts/reference_lock.py: record a canonical reference contract and check structural invariants on candidates.
 - scripts/composite_layers.py: apply ordered local RGBA patches or masked full-frame edits to a static base.
 - scripts/region_validate.py: measure whether adjacent changes stay inside an approved region.
 - scripts/composite_validate.py: check a static-base composite for outside drift and mask-edge spill.
 - scripts/validate_output.py: check image readability, dimensions, frame counts, alpha presence, and basic animation metadata.
 - scripts/motion_recipe.py: compile a conservative, object-agnostic motion concept when the user supplies no action.
+- scripts/preflight_plan.py: compile the user-visible production card and route summary before execution.
 - scripts/write_manifest.py: record the media, route, motion concept, and validation reports beside an output.
+- scripts/sticker_package.py: shared platform-profile, image-inspection, and package-validation helpers.
+- scripts/package_sticker_set.py: package ordered stickers and derive icons/cover assets.
+- scripts/validate_sticker_package.py: validate a complete sticker package against a platform profile.
 - scripts/repair_plan.py: convert failed validation reports into the next safe repair route.
 - scripts/probe_backends.py: detect optional local encoders, ffmpeg, and FILM assets without installing anything.
 

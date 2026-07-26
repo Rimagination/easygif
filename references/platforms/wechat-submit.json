@@ -1,0 +1,31 @@
+{
+  "schema": "easygif/platform-profile-v1",
+  "id": "wechat-submit",
+  "label": "微信表情开放平台投稿",
+  "mode": "submission",
+  "strict": true,
+  "main": {
+    "formats": ["GIF", "PNG"],
+    "width": 240,
+    "height": 240,
+    "max_bytes": 500000,
+    "max_duration_ms": 5000,
+    "aspect_policy": "exact"
+  },
+  "set": {
+    "allowed_counts": [8, 16, 24],
+    "min_items": 8,
+    "max_items": 24
+  },
+  "derived_assets": {
+    "item_icon": {"width": 50, "height": 50, "format": "PNG", "max_bytes": 50000},
+    "cover": {"width": 240, "height": 240, "format": "PNG", "required": true},
+    "chat_icon": {"width": 50, "height": 50, "format": "PNG", "required": true},
+    "banner": {"width": 750, "height": 400, "format": "PNG", "required": true}
+  },
+  "notes": [
+    "该 profile 采用公开第三方资料中常见的投稿约束，提交前必须以微信当前后台和官方规范复核。",
+    "开放平台投稿与微信聊天发送不是同一条限制链路。",
+    "banner、封面和赞赏素材的文案与版权审查不由本地像素校验覆盖。"
+  ]
+}

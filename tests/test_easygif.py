@@ -45,6 +45,50 @@ class AdaptiveMediaForgeTests(unittest.TestCase):
         self.assertGreaterEqual(len(recipe["micro_motions"]), 1)
         self.assertIn("camera and framing", recipe["locked_invariants"])
 
+        submission_route = json.loads(run_script(
+            "select_strategy.py",
+            "--scope", "local", "--family", "periodic", "--continuity", "medium",
+            "--source-width", "240", "--source-height", "240", "--atlas-width", "1536",
+            "--frames", "6", "--platform-profile", "wechat-submit",
+        ).stdout)
+        self.assertEqual(submission_route["platform_profile"], "wechat-submit")
+        self.assertEqual(submission_route["platform_contract"]["max_bytes"], 500000)
+        self.assertEqual(submission_route["target_format"], "gif")
+
+        preflight = json.loads(run_script(
+            "preflight_plan.py",
+            "--goal", "a hand-drawn chat sticker",
+            "--subject", "one sleepy cat",
+            "--action", "open the jaw into a slow yawn and return",
+            "--family", "deformable", "--scope", "local", "--continuity", "high",
+            "--source-width", "1024", "--source-height", "1024",
+            "--frames", "9", "--platform-profile", "wechat-chat",
+        ).stdout)
+        self.assertEqual(preflight["status"], "ready_for_execution")
+        self.assertEqual(preflight["subject"], "one sleepy cat")
+        self.assertEqual(preflight["generation_plan"]["frames"], 9)
+        self.assertEqual(preflight["representation"], "full_frame")
+        self.assertEqual(preflight["reference"]["source"], "generated")
+        self.assertEqual(preflight["reference"]["status"], "locked")
+        self.assertIn("validation_gates", preflight)
+
+        needs_selection = json.loads(run_script(
+            "preflight_plan.py",
+            "--subject", "an unfamiliar fantasy creature",
+            "--source-width", "1024", "--source-height", "1024",
+            "--reference-confidence", "low",
+        ).stdout)
+        self.assertEqual(needs_selection["status"], "needs_user_selection")
+        self.assertEqual(needs_selection["reference"]["status"], "needs-user-selection")
+
+        video_reference = json.loads(run_script(
+            "preflight_plan.py",
+            "--input-source", "video", "--reference-source", "video-first-frame",
+            "--source-width", "640", "--source-height", "360",
+        ).stdout)
+        self.assertEqual(video_reference["status"], "ready_for_execution")
+        self.assertEqual(video_reference["reference"]["status"], "locked")
+
     def test_full_frame_route_does_not_request_layer_validation(self) -> None:
         route = json.loads(run_script(
             "select_strategy.py",
@@ -63,10 +107,20 @@ class AdaptiveMediaForgeTests(unittest.TestCase):
             "select_strategy.py",
             "--scope", "local", "--family", "appearance", "--continuity", "medium",
             "--source-width", "16", "--source-height", "9", "--atlas-width", "1536",
-            "--frames", "6", "--max-bytes", "1000000",
+            "--frames", "6", "--max-bytes", "1000000", "--trusted-region",
         ).stdout)
         self.assertEqual(layer_route["composition_contract"]["mode"], "static_base_plus_patch")
         self.assertIn("composite_validate", layer_route["validators"])
+        self.assertTrue(layer_route["layer_source"]["explicit"])
+
+        semantic_only = json.loads(run_script(
+            "select_strategy.py",
+            "--scope", "local", "--family", "appearance", "--continuity", "medium",
+            "--source-width", "16", "--source-height", "9", "--atlas-width", "1536",
+            "--frames", "6", "--max-bytes", "1000000",
+        ).stdout)
+        self.assertEqual(semantic_only["composition_contract"]["mode"], "full_frame")
+        self.assertNotIn("composite_validate", semantic_only["validators"])
 
     def test_grid_gate_rejects_wrong_cell_aspect_and_slices_valid_atlas(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -126,6 +180,26 @@ class AdaptiveMediaForgeTests(unittest.TestCase):
             report = json.loads(validation.stdout)
             self.assertTrue(report["passed"])
 
+            clean_output = root / "clean.gif"
+            run_script(
+                "optimize_gif.py", str(source), str(clean_output),
+                "--size", "240", "--colors", "256", "--dither", "none",
+            )
+            with Image.open(clean_output) as clean:
+                self.assertEqual(clean.n_frames, 9)
+                self.assertEqual(clean.size, (240, 240))
+
+            final_output = root / "final.gif"
+            delivery = json.loads(run_script(
+                "finalize_gif.py", str(source), str(final_output),
+                "--size", "240", "--max-bytes", "1000000",
+                "--expect-width", "240", "--expect-height", "240",
+                "--expect-frames", "9",
+            ).stdout)
+            self.assertEqual(delivery["status"], "delivered")
+            self.assertTrue(final_output.is_file())
+            self.assertTrue((root / "final-delivery.json").is_file())
+
     def test_optimizer_preserves_non_square_source_aspect_by_default(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -141,6 +215,39 @@ class AdaptiveMediaForgeTests(unittest.TestCase):
                 "--expect-frames", "2", "--require-loop", "--json",
             )
             self.assertTrue(json.loads(validation.stdout)["passed"])
+
+    def test_optimizer_preserves_transparency_without_dither(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            source = root / "transparent.gif"
+            frames = []
+            for index in range(3):
+                image = Image.new("RGBA", (96, 96), (0, 0, 0, 0))
+                ImageDraw.Draw(image).ellipse(
+                    (20 + index, 20, 70 + index, 70), fill=(80, 150, 220, 255)
+                )
+                frames.append(image)
+            frames[0].save(
+                source,
+                save_all=True,
+                append_images=frames[1:],
+                duration=100,
+                loop=0,
+                transparency=0,
+                disposal=2,
+                format="GIF",
+            )
+            for frame in frames:
+                frame.close()
+            output = root / "transparent-optimized.gif"
+            run_script(
+                "optimize_gif.py", str(source), str(output),
+                "--size", "96", "--colors", "256", "--dither", "none",
+            )
+            validation = json.loads(run_script(
+                "validate_output.py", str(output), "--json", "--require-alpha",
+            ).stdout)
+            self.assertTrue(validation["passed"])
 
     def test_composite_validator_rejects_boundary_spill(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -207,6 +314,60 @@ class AdaptiveMediaForgeTests(unittest.TestCase):
             conservative_result = json.loads(conservative.stdout)
             self.assertEqual(conservative_result["composition_mode"], "unspecified")
             self.assertEqual(conservative_result["recommended_next_route"], "contact_sheet")
+
+    def test_wechat_package_and_visual_qa(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            source = root / "source"
+            source.mkdir()
+            for index in range(8):
+                image = Image.new("RGBA", (240, 240), (245, 245, 245, 255))
+                draw = ImageDraw.Draw(image)
+                draw.ellipse((40 + index, 60, 170 + index, 190), fill=(40, 80, 160, 255))
+                image.save(source / f"frame-{index + 1:02d}.png")
+                image.close()
+            package = root / "package"
+            banner = root / "banner.png"
+            Image.new("RGB", (750, 400), (30, 100, 140)).save(banner)
+            run_script(
+                "package_sticker_set.py", str(source), str(package), "--profile", "wechat-submit",
+                "--banner", str(banner),
+            )
+            validation = json.loads(run_script(
+                "validate_sticker_package.py", str(package), "--profile", "wechat-submit",
+            ).stdout)
+            self.assertTrue(validation["passed"])
+            self.assertEqual(validation["count"], 8)
+            self.assertTrue((package / "assets" / "cover.png").is_file())
+            self.assertEqual(len(list((package / "assets" / "icons").glob("*.png"))), 8)
+
+            frames = root / "frames"
+            frames.mkdir()
+            for index in range(3):
+                image = Image.new("RGB", (64, 48), (240, 240, 240))
+                ImageDraw.Draw(image).rectangle((10 + index, 10, 28 + index, 30), fill=(10, 80, 140))
+                image.save(frames / f"frame-{index:03d}.png")
+                image.close()
+            report_path = root / "visual-qa.json"
+            qa = json.loads(run_script(
+                "visual_qa.py", str(frames), "--report", str(report_path), "--cell-long-edge", "64",
+            ).stdout)
+            self.assertTrue(qa["passed"])
+            self.assertTrue((root / "contact-sheet.png").is_file())
+            self.assertEqual(qa["frames"], 3)
+
+            reference = root / "reference.png"
+            Image.new("RGBA", (80, 60), (20, 30, 40, 255)).save(reference)
+            candidate = root / "candidate.png"
+            Image.new("RGBA", (80, 60), (20, 30, 40, 255)).save(candidate)
+            lock = root / "reference-lock.json"
+            result = json.loads(run_script(
+                "reference_lock.py", str(reference), "--output", str(lock), "--candidate", str(candidate),
+            ).stdout)
+            self.assertTrue(result["passed"])
+            self.assertEqual(result["reference"]["size"], [80, 60])
+            self.assertEqual(result["source_kind"], "user-provided")
+            self.assertEqual(result["status"], "locked")
 
 
 if __name__ == "__main__":
