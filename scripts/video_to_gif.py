@@ -9,6 +9,38 @@ from pathlib import Path
 
 from PIL import Image
 
+try:
+    from optimize_gif import index_frames
+except ImportError:  # pragma: no cover - supports package-style imports
+    from .optimize_gif import index_frames
+
+
+def probe_dimensions(ffprobe: str, path: Path) -> tuple[int, int]:
+    try:
+        result = subprocess.run(
+            [ffprobe, "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height", "-of", "csv=p=0:s=x", str(path)],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except subprocess.CalledProcessError as exc:
+        detail = exc.stderr.strip() if exc.stderr else "unknown ffprobe error"
+        raise SystemExit(f"could not read video dimensions: {detail}") from exc
+    raw = result.stdout.strip()
+    try:
+        width, height = (int(value) for value in raw.split("x", 1))
+    except (ValueError, TypeError):
+        raise SystemExit(f"could not read video dimensions from ffprobe: {raw!r}")
+    if width <= 0 or height <= 0:
+        raise SystemExit(f"invalid video dimensions: {width}x{height}")
+    return width, height
+
+
+def aspect_preserving_size(source_size: tuple[int, int], long_edge: int) -> tuple[int, int]:
+    width, height = source_size
+    scale = long_edge / max(width, height)
+    return max(16, round(width * scale)), max(16, round(height * scale))
+
 
 def main() -> None:
     parser = argparse.ArgumentParser()
@@ -18,9 +50,11 @@ def main() -> None:
     parser.add_argument("--size", type=int, default=240)
     parser.add_argument("--width", type=int)
     parser.add_argument("--height", type=int)
+    parser.add_argument("--square", action="store_true", help="force a square canvas; otherwise --size preserves the source aspect ratio")
     parser.add_argument("--fit", choices=["contain", "stretch"], default="contain")
     parser.add_argument("--background", default="000000", help="contain padding color as RRGGBB")
-    parser.add_argument("--colors", type=int, choices=[32, 64, 128, 256], default=128)
+    parser.add_argument("--colors", type=int, choices=[32, 64, 128, 256], default=256)
+    parser.add_argument("--dither", choices=["none", "floyd-steinberg"], default="none")
     parser.add_argument("--start", type=float, default=0)
     parser.add_argument("--duration", type=float)
     args = parser.parse_args()
@@ -29,9 +63,18 @@ def main() -> None:
     ffmpeg = shutil.which("ffmpeg")
     if not ffmpeg:
         raise SystemExit("ffmpeg is required for video input")
-    width = args.width or args.size
-    height = args.height or args.size
-    if args.fps <= 0 or min(width, height) < 16:
+    if (args.width is None) != (args.height is None):
+        raise SystemExit("--width and --height must be supplied together")
+    if args.width is not None and args.height is not None:
+        width, height = args.width, args.height
+    elif args.square:
+        width, height = args.size, args.size
+    else:
+        ffprobe = shutil.which("ffprobe")
+        if not ffprobe:
+            raise SystemExit("ffprobe is required to preserve video aspect ratio; pass --square to avoid probing")
+        width, height = aspect_preserving_size(probe_dimensions(ffprobe, args.input), args.size)
+    if args.size < 16 or args.fps <= 0 or min(width, height) < 16:
         raise SystemExit("fps must be positive and width/height must be at least 16")
     background = args.background.lstrip("#")
     if len(background) != 6:
@@ -59,26 +102,33 @@ def main() -> None:
         if not paths:
             raise SystemExit("video produced no frames")
         frames = []
+        indexed = []
         try:
             for path in paths:
                 with Image.open(path) as image:
-                    frame = image.convert("RGBA").convert(
-                        "P", palette=Image.Palette.ADAPTIVE, colors=args.colors
-                    )
-                    frames.append(frame)
+                    frames.append(image.convert("RGBA"))
+            dither = Image.Dither.NONE if args.dither == "none" else Image.Dither.FLOYDSTEINBERG
+            indexed, transparent_index = index_frames(frames, args.colors, dither)
             args.output.parent.mkdir(parents=True, exist_ok=True)
             duration = max(1, round(1000 / args.fps))
-            frames[0].save(
+            save_options = {
+                "save_all": True,
+                "append_images": indexed[1:],
+                "duration": duration,
+                "loop": 0,
+                "optimize": True,
+                "disposal": 2,
+                "format": "GIF",
+            }
+            if transparent_index is not None:
+                save_options["transparency"] = transparent_index
+            indexed[0].save(
                 args.output,
-                save_all=True,
-                append_images=frames[1:],
-                duration=duration,
-                loop=0,
-                optimize=True,
-                disposal=2,
-                format="GIF",
+                **save_options,
             )
         finally:
+            for frame in indexed:
+                frame.close()
             for frame in frames:
                 frame.close()
     print(f"wrote {len(paths)} frames to {args.output} ({args.output.stat().st_size} bytes)")

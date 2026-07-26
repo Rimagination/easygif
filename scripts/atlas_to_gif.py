@@ -8,8 +8,10 @@ from PIL import Image
 
 try:
     from validate_grid_geometry import inspect_atlas
+    from optimize_gif import index_frames
 except ImportError:  # pragma: no cover - supports package-style imports
     from .validate_grid_geometry import inspect_atlas
+    from .optimize_gif import index_frames
 
 
 def main() -> None:
@@ -25,6 +27,8 @@ def main() -> None:
     parser.add_argument("--source-height", type=int)
     parser.add_argument("--expected-cell-aspect", type=float)
     parser.add_argument("--tolerance", type=float, default=0.08)
+    parser.add_argument("--colors", type=int, choices=[32, 64, 128, 256], default=256)
+    parser.add_argument("--dither", choices=["none", "floyd-steinberg"], default="none")
     args = parser.parse_args()
     if args.rows < 1 or args.cols < 1 or args.fps <= 0:
         raise SystemExit("rows, cols, and fps must be positive")
@@ -52,10 +56,25 @@ def main() -> None:
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
     duration = max(1, round(1000 / args.fps))
+    dither = Image.Dither.NONE if args.dither == "none" else Image.Dither.FLOYDSTEINBERG
+    indexed, transparent_index = index_frames(frames, args.colors, dither)
     if args.output.suffix.lower() == ".webp":
         frames[0].save(args.output, save_all=True, append_images=frames[1:], duration=duration, loop=args.loop, format="WEBP", lossless=True)
     else:
-        frames[0].save(args.output, save_all=True, append_images=frames[1:], duration=duration, loop=args.loop, format="GIF", disposal=2, optimize=True)
+        save_options = {
+            "save_all": True,
+            "append_images": indexed[1:],
+            "duration": duration,
+            "loop": args.loop,
+            "format": "GIF",
+            "disposal": 2,
+            "optimize": True,
+        }
+        if transparent_index is not None:
+            save_options["transparency"] = transparent_index
+        indexed[0].save(args.output, **save_options)
+    for frame in indexed:
+        frame.close()
     for frame in frames:
         frame.close()
     print(f"wrote {len(frames)} frames to {args.output}")

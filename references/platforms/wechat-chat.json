@@ -1,0 +1,29 @@
+{
+  "schema": "easygif/platform-profile-v1",
+  "id": "wechat-chat",
+  "label": "微信聊天动图",
+  "mode": "chat",
+  "strict": false,
+  "main": {
+    "formats": ["GIF", "WEBP", "MP4"],
+    "recommended_long_edge": 240,
+    "max_bytes": 1000000,
+    "max_duration_ms": 5000,
+    "aspect_policy": "preserve"
+  },
+  "set": {
+    "allowed_counts": [],
+    "min_items": 1,
+    "max_items": 99
+  },
+  "derived_assets": {
+    "item_icon": {"width": 50, "height": 50, "format": "PNG"},
+    "cover": {"width": 240, "height": 240, "format": "PNG"},
+    "chat_icon": {"width": 50, "height": 50, "format": "PNG"}
+  },
+  "notes": [
+    "这是聊天发送的宽松默认 profile，不等同于微信表情开放平台投稿规范。",
+    "最终能否以表情形式发送还取决于客户端入口、文件格式和账号能力。",
+    "max_bytes 与时长是 EasyGIF 的保守交付预算，不是微信官方承诺。"
+  ]
+}

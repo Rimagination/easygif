@@ -54,6 +54,34 @@ not a geometry repair. For GIF budgets, let `scripts/optimize_gif.py` retry
 colors, dimensions, and playback frame count, then validate the actual file
 with `scripts/validate_output.py --max-bytes`.
 
+### GIF encoding quality gate
+
+For hand-drawn, photographic, or textured frames, start with a shared
+256-color palette and no dithering. Per-frame adaptive palettes and
+Floyd–Steinberg dithering can turn paper grain, fur, soft gradients, or
+anti-aliased lines into colored speckles and frame-to-frame shimmer. Reduce
+colors only after the actual file exceeds the byte budget. For transparent
+subjects, reserve and validate a GIF transparency index; never trade away
+alpha just to meet a size target. Use `scripts/finalize_gif.py` after any
+staging encode so the final path, size, aspect, frame count, loop, and alpha
+contract are checked together.
+
+## Full-frame versus layered representation
+
+This is a representation boundary, not a scene category:
+
+| Input/operation | Contract | Failure response |
+|---|---|---|
+| contact sheet, independent keyframes, video frames, FILM output | each frame is a complete image; background and subject are not separable by default | regenerate full frames, lower motion amplitude, or switch to a temporal source |
+| explicit RGBA patch, supplied mask, deterministic transform | static base plus local patch; canvas and outside pixels are owned by the base | run region validation and boundary-spill validation; repair the mask or patch |
+| opaque generated full frame with background drift | diagnostic evidence only | never chroma-cut or color-threshold the subject as an automatic repair |
+
+`region_validate.py` is a useful drift detector, but it is not a segmentation
+tool. For a true layer route, run `composite_validate.py` as well. It compares
+each composite against the static base and checks a ring just outside the
+approved region, where white halos, green fringes, double contours, and hard
+cutout seams usually appear.
+
 ## Contact-sheet-first
 
 Use one generated image containing a strict grid when:
@@ -83,6 +111,8 @@ After generation:
 4. Inspect the contact sheet and at least the first, middle, and last frame.
 5. Reject the strategy if the model merged cells, changed identity, or
    changed the intended framing. Do not crop the content to hide the failure.
+6. Treat the staged GIF as non-deliverable. Run `scripts/finalize_gif.py`,
+   inspect its delivery report, and only then expose the final file.
 
 ## Independent-frame fallback
 
@@ -100,19 +130,22 @@ slow, gentle motion; it quadruples the number of model calls per interval.
 
 ## Local-first compositing
 
-When the Motion IR marks the action as `local` or `cluster`, preserve a static
-base layer whenever the request does not explicitly require a global change:
+When the selected route is `static_base_plus_patch` and the Motion IR marks the
+action as `local` or `cluster`, preserve a static base layer:
 
 1. Resolve the target into a bounding box or mask; keep a semantic description
-   in the manifest as well.
+   in the manifest as well. Do not treat a semantic guess as a pixel-accurate
+   mask.
 2. Generate local RGBA patches, local crops, or full-frame edits with a mask.
 3. Use `scripts/composite_layers.py` to place each ordered edit on the same
    base image.
 4. If the local edit is continuous, run FILM only on the local crop or patch,
    then composite the interpolated results back onto the base.
-5. Run `scripts/region_validate.py` on the composited frames before GIF or
-   video encoding. A violation means the region estimate, mask, or keyframe
-   plan needs revision; increasing interpolation strength is not a fix.
+5. Run `scripts/region_validate.py` and `scripts/composite_validate.py` on the
+   composited frames before GIF or video encoding. A violation means the
+   region estimate, mask, or patch needs revision; increasing interpolation
+   strength is not a fix. If no explicit alpha/mask or deterministic patch
+   exists, stop using the layer route and return to full-frame keyframes.
 
 This route is intentionally object-agnostic. It applies to a hand, eye,
 tail, prop, light source, cloud, UI element, brush stroke, or any other

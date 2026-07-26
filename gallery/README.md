@@ -1,17 +1,21 @@
-# EasyGIF gallery
+# EasyGIF 案例画廊
 
-画廊案例应保留完整证据链，而不只展示最终 GIF：
+这些案例用于展示 EasyGIF 对不同应用场景的自适应处理方式。
 
-```text
-source → motion recipe → route plan → frames/contact sheet → final media → manifest/validation
-```
+## 微信表情包：袋熊挠屁股后看镜头
 
-每个案例建议包含：
+以 3×3 关键帧为参考，保持同一只动物、同一机位和同一背景，只让前爪、眼睛和身体产生低幅度动作。
 
-- 原始输入或引用说明
-- 主动作、微动作和锁定不变量
-- 选择的表示方式与 fallback
-- 首帧、中间帧、末帧和循环边界检查
-- 最终输出的尺寸、帧数、FPS、透明度和实际字节数
+<img src="wombat-scratch-look-wechat.gif" alt="袋熊挠屁股后看镜头" width="240">
 
-项目首图位于 [`assets/easygif-hero-handdrawn.png`](../assets/easygif-hero-handdrawn.png)。
+## 手绘插画：猫猫打哈欠
+
+保持线稿、体型、耳朵、胡须、爪子和纸张背景不变，只让眼睛、嘴巴和胸口完成一段慢速打哈欠动作。
+
+<img src="cat-yawn-handdrawn.gif" alt="手绘猫猫打哈欠" width="240">
+
+## 电影感视觉
+
+保持城市剪影和画面构图不变，让光束和空气感缓慢流动。
+
+<img src="cinematic-light-sweep.gif" alt="电影感光束扫过城市" width="480">

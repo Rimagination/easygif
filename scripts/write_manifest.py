@@ -46,6 +46,8 @@ def main() -> None:
     parser.add_argument("--validation", type=Path, action="append", default=[])
     parser.add_argument("--motion-concept", default="unspecified")
     parser.add_argument("--strategy", default="unspecified")
+    parser.add_argument("--platform-profile", default=None)
+    parser.add_argument("--reference-lock", type=Path)
     parser.add_argument("--note", action="append", default=[])
     args = parser.parse_args()
 
@@ -55,6 +57,8 @@ def main() -> None:
         "source": describe_media(args.source) if args.source else None,
         "motion": {"concept": args.motion_concept},
         "strategy": args.strategy,
+        "platform_profile": args.platform_profile,
+        "reference_lock": load_json(args.reference_lock) if args.reference_lock else None,
         "plan": load_json(args.plan) if args.plan else None,
         "validation": {
             path.stem: load_json(path)

@@ -35,7 +35,7 @@ def main() -> None:
             width, height = image.size
             frames = getattr(image, "n_frames", 1)
             format_name = image.format or args.path.suffix.lstrip(".").upper()
-            alpha = "A" in image.getbands()
+            alpha = "A" in image.getbands() or image.info.get("transparency") is not None
             loop = image.info.get("loop")
             report.update({
                 "format": format_name,
