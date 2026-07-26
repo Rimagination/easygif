@@ -1,0 +1,28 @@
+{
+  "cinematic": {
+    "medium": ["cinematic film still", "controlled production design"],
+    "lighting": ["motivated practical light", "soft key with selective rim light"],
+    "composition": ["intentional depth", "clear foreground, subject, and background separation"],
+    "mood": ["atmospheric", "emotionally specific", "restrained"],
+    "avoid": ["generic stock-photo look", "flat lighting", "visual clutter"]
+  },
+  "transparent_stylized_pet": {
+    "medium": ["clean stylized character illustration", "readable silhouette"],
+    "composition": ["centered full body", "consistent scale and ground line across frames"],
+    "lighting": ["soft even light", "clean edge separation"],
+    "mood": ["friendly", "expressive", "playful"],
+    "avoid": ["background scenery", "text", "watermark", "cropped limbs"]
+  },
+  "game_asset": {
+    "medium": ["game-ready 2D asset", "clear silhouette", "production-readable details"],
+    "composition": ["fixed-cell framing", "consistent anchor point", "safe padding"],
+    "lighting": ["readable directional shading", "controlled highlights"],
+    "avoid": ["inconsistent scale", "merged neighboring frames", "unnecessary background"]
+  },
+  "chat_sticker": {
+    "medium": ["expressive sticker illustration", "bold readable shape language"],
+    "composition": ["single focal subject", "clear silhouette at small size"],
+    "mood": ["immediate", "exaggerated", "friendly"],
+    "avoid": ["tiny details", "long text", "complex background", "watermark"]
+  }
+}

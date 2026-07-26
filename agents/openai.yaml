@@ -1,0 +1,4 @@
+interface:
+  display_name: "EasyGIF"
+  short_description: "Turn still visuals into validated motion assets"
+  default_prompt: "Animate or package the requested visual asset, infer a natural motion when needed, choose the safest route, and produce validated final files with a manifest."
