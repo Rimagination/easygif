@@ -6,6 +6,7 @@
   <a href="SKILL.md"><img alt="SKILL: EasyGIF" src="https://img.shields.io/badge/SKILL-EasyGIF-7B4CC2?style=for-the-badge&labelColor=555555"></a>
   <a href="scripts/validate_output.py"><img alt="OUTPUT: validated media" src="https://img.shields.io/badge/OUTPUT-VALIDATED_MEDIA-2FA36B?style=for-the-badge&labelColor=555555"></a>
   <a href="tests/test_easygif.py"><img alt="TESTS: Python unittest" src="https://img.shields.io/badge/TESTS-PYTHON_UNITTEST-268BD2?style=for-the-badge&labelColor=555555"></a>
+  <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/LICENSE-MIT-FF6699?style=for-the-badge&labelColor=555555"></a>
 </p>
 
 # EasyGIF
@@ -91,3 +92,7 @@ python "$env:USERPROFILE\.codex\skills\.system\skill-creator\scripts\quick_valid
 ## 状态
 
 Incubating：核心自适应路由、宫格/图层/关键帧处理、P0–P3 质量门禁已经可用，后续继续扩展视频生成后端和更多 gallery 案例。
+
+## 许可
+
+本项目采用 [MIT License](LICENSE)。
